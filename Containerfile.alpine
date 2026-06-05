@@ -85,6 +85,7 @@ RUN apk add --no-cache \
         'pngquant' \
         'pcre2' \
         'python3' \
+        'su-exec' \
         'tini' \
         'xmltv' \
         'zlib' \
@@ -102,6 +103,6 @@ COPY "./support/container-entrypoint.sh" "/init"
 VOLUME /var/lib/tvheadend
 VOLUME /var/lib/tvheadend/recordings
 WORKDIR /var/lib/tvheadend/
-USER tvheadend
+USER root
 
 ENTRYPOINT [ "/sbin/tini", "--", "/init" ]

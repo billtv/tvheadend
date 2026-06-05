@@ -1,0 +1,103 @@
+name: Sync upstream and keep fork overlays
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-master
+  cancel-in-progress: false
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: master
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Save fork overlay
+        run: |
+          overlay="$(mktemp -d)"
+          echo "OVERLAY_DIR=$overlay" >> "$GITHUB_ENV"
+
+          mkdir -p "$overlay/intl/js" "$overlay/intl/docs" "$overlay/.github/workflows" "$overlay/support"
+          cp intl/js/tvheadend.js.zh-Hans.po "$overlay/intl/js/"
+          cp intl/js/tvheadend.js.zh.po "$overlay/intl/js/"
+          cp intl/tvheadend.zh-Hans.po "$overlay/intl/"
+          cp intl/tvheadend.zh.po "$overlay/intl/"
+          cp intl/docs/tvheadend.doc.zh-Hans.po "$overlay/intl/docs/"
+          cp intl/docs/tvheadend.doc.zh.po "$overlay/intl/docs/"
+          cp .github/workflows/container-build.yaml "$overlay/.github/workflows/"
+          cp .github/workflows/sync-upstream.yml "$overlay/.github/workflows/"
+          cp support/container-entrypoint.sh "$overlay/support/"
+          cp Containerfile.alpine Containerfile.debian Containerfile Dockerfile "$overlay/"
+
+      - name: Reset to upstream master
+        run: |
+          git remote add upstream https://github.com/tvheadend/tvheadend.git
+          git fetch --tags upstream master
+          upstream_sha="$(git rev-parse upstream/master)"
+          echo "UPSTREAM_SHA=$upstream_sha" >> "$GITHUB_ENV"
+          git reset --hard "$upstream_sha"
+
+      - name: Restore fork overlay
+        run: |
+          cp "$OVERLAY_DIR/intl/js/tvheadend.js.zh-Hans.po" intl/js/
+          cp "$OVERLAY_DIR/intl/js/tvheadend.js.zh.po" intl/js/
+          cp "$OVERLAY_DIR/intl/tvheadend.zh-Hans.po" intl/
+          cp "$OVERLAY_DIR/intl/tvheadend.zh.po" intl/
+          cp "$OVERLAY_DIR/intl/docs/tvheadend.doc.zh-Hans.po" intl/docs/
+          cp "$OVERLAY_DIR/intl/docs/tvheadend.doc.zh.po" intl/docs/
+          mkdir -p .github/workflows
+          cp "$OVERLAY_DIR/.github/workflows/container-build.yaml" .github/workflows/
+          cp "$OVERLAY_DIR/.github/workflows/sync-upstream.yml" .github/workflows/
+          cp "$OVERLAY_DIR/support/container-entrypoint.sh" support/
+          cp "$OVERLAY_DIR/Containerfile.alpine" "$OVERLAY_DIR/Containerfile.debian" "$OVERLAY_DIR/Containerfile" "$OVERLAY_DIR/Dockerfile" .
+          rm -f .github/workflows/build-cloudsmith.yml
+          echo "$UPSTREAM_SHA" > .github/fork-upstream-sha
+
+      - name: Commit overlay changes
+        id: commit
+        run: |
+          git add \
+            intl/js/tvheadend.js.zh-Hans.po \
+            intl/js/tvheadend.js.zh.po \
+            intl/tvheadend.zh-Hans.po \
+            intl/tvheadend.zh.po \
+            intl/docs/tvheadend.doc.zh-Hans.po \
+            intl/docs/tvheadend.doc.zh.po \
+            support/container-entrypoint.sh \
+            Containerfile.alpine \
+            Containerfile.debian \
+            Containerfile \
+            Dockerfile \
+            .github/workflows/container-build.yaml \
+            .github/workflows/sync-upstream.yml \
+            .github/fork-upstream-sha
+          git add -u .github/workflows/build-cloudsmith.yml
+
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git commit -m "Sync upstream and keep Simplified Chinese overlays"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push synced master
+        if: steps.commit.outputs.changed == 'true'
+        run: |
+          git push --force-with-lease origin HEAD:master

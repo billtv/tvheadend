@@ -89,6 +89,7 @@ RUN apt-get update --yes && apt-get install --yes \
         'libdbus-1-3' \
         'libdvbcsa1' \
         'libhdhomerun5' \
+        'gosu' \
         'libpostproc58' \
         'libswscale8' \
         'libopus0' \
@@ -117,6 +118,6 @@ COPY "./support/container-entrypoint.sh" "/init"
 VOLUME /var/lib/tvheadend
 VOLUME /var/lib/tvheadend/recordings
 WORKDIR /var/lib/tvheadend/
-USER tvheadend
+USER root
 
 ENTRYPOINT [ "/usr/bin/tini", "--", "/init" ]

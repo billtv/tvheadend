@@ -4,46 +4,58 @@ on:
   push:
     branches:
       - master
-    tags:
-      - 'v*'
   pull_request:
     branches:
       - master
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: billtv/tvheadend
+
+concurrency:
+  group: container-image-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-and-push-image:
     runs-on: ubuntu-latest
-    continue-on-error: true
     permissions:
       contents: read
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - container: Containerfile.debian
-            autotag: false
-            suffix: -debian
-          - container: Containerfile.alpine
-            autotag: ${{ github.ref == 'refs/heads/master' && 'true' || 'auto' }}
+          - variant: alpine
+            container: Containerfile.alpine
+            suffix: ""
+          - variant: debian
+            container: Containerfile.debian
+            suffix: "-debian"
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
+      - name: Resolve upstream tag
+        id: upstream
+        shell: bash
+        run: |
+          upstream_sha="$(cat .github/fork-upstream-sha 2>/dev/null || git rev-parse HEAD)"
+          echo "short=${upstream_sha:0:12}" >> "$GITHUB_OUTPUT"
+
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Login to Container registry
-        uses: docker/login-action@v2
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -51,23 +63,21 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v6
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=edge
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-          flavor: |
-            latest=${{ matrix.autotag }}
-            suffix=${{ matrix.suffix }}
+            type=raw,value=latest${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/master' }}
+            type=raw,value=master${{ matrix.suffix }},enable=${{ github.ref == 'refs/heads/master' }}
+            type=sha,prefix=sha-,suffix=${{ matrix.suffix }}
+            type=raw,value=upstream-${{ steps.upstream.outputs.short }}${{ matrix.suffix }}
+          labels: |
+            org.opencontainers.image.title=Tvheadend
+            org.opencontainers.image.description=Tvheadend with Simplified Chinese translations
 
       - name: Build and push
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v7
         with:
           platforms: linux/amd64,linux/386,linux/arm64,linux/arm/v7,linux/arm/v6
           context: .
@@ -75,3 +85,5 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
